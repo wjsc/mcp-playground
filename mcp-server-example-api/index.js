@@ -17,11 +17,6 @@ app.use(express.json());
 const transports = {};
 
 app.post('/mcp', async (req, res) => {
-  // Check for existing session ID
-
-  
-  // if(req.body.method === "notifications/initialized") return res.send(200)
-  // if(req.body.method === "tools/list") return res.send(200).json(["say-hello"])
 
   const sessionId = req.headers['mcp-session-id'] || undefined;
   let transport;
@@ -78,7 +73,7 @@ app.post('/mcp', async (req, res) => {
     await server.connect(transport);
   } else {
     // Invalid request
-
+    
     res.status(400).json({
       jsonrpc: '2.0',
       error: {
@@ -107,7 +102,7 @@ const handleSessionRequest = async (req, res) => {
   }
   
   const transport = transports[sessionId];
-
+  console.log(req)
   await transport.handleRequest(req, res);
 };
 

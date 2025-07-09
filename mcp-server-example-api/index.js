@@ -1,105 +1,117 @@
 const express = require( "express")
+const morgan = require('morgan')
+const { randomUUID }  = require("node:crypto")
 const { StreamableHTTPServerTransport } = require("@modelcontextprotocol/sdk/server/streamableHttp.js")
+const { isInitializeRequest }  = require("@modelcontextprotocol/sdk/types.js")
+
 const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js") 
 const z = require("zod")
 const app = express();
 app.use(express.json());
 
+app.use(morgan(':method :url :status :res[content-length] - :response-time ms'))
 
-const server = new McpServer({
-      name: "example-server",
-      version: "1.0.0"
-});
+app.use(express.json());
 
+// Map to store transports by session ID
+const transports = {};
 
 app.post('/mcp', async (req, res) => {
-  // In stateless mode, create a new instance of transport and server for each request
-  // to ensure complete isolation. A single instance would cause request ID collisions
-  // when multiple clients connect concurrently.
+  // Check for existing session ID
+
   
-  try {
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
+  // if(req.body.method === "notifications/initialized") return res.send(200)
+  // if(req.body.method === "tools/list") return res.send(200).json(["say-hello"])
+
+  const sessionId = req.headers['mcp-session-id'] || undefined;
+  let transport;
+  
+  if (sessionId && transports[sessionId]) {
+    // Reuse existing transport
+    transport = transports[sessionId];
+  } else if (!sessionId && isInitializeRequest(req.body)) {
+    // New initialization request
+    transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (sessionId) => {
+        // Store the transport by session ID
+        transports[sessionId] = transport;
+      },
+      // DNS rebinding protection is disabled by default for backwards compatibility. If you are running this server
+      // locally, make sure to set:
+      enableDnsRebindingProtection: true,
+      allowedHosts: ['127.0.0.1:4000'],
     });
-    res.on('close', () => {
-      console.log('Request closed');
-      transport.close();
-      server.close();
+
+    // Clean up transport when closed
+    transport.onclose = () => {
+      if (transport.sessionId) {
+        delete transports[transport.sessionId];
+      }
+    };
+    const server = new McpServer({
+      name: "example-server",
+      version: "1.0.0",
+      capabilities: {
+        resources: {},
+        tools: {},
+      },
     });
-    await server.connect(transport);
-    await transport.handleRequest(req, res, req.body);
-  } catch (error) {
-    console.error('Error handling MCP request:', error);
-    if (!res.headersSent) {
-      res.status(500).json({
-        jsonrpc: '2.0',
-        error: {
-          code: -32603,
-          message: 'Internal server error',
-        },
-        id: null,
-      });
-    }
-  }
-});
 
-// SSE notifications not supported in stateless mode
-app.get('/mcp', async (req, res) => {
-  console.log('Received GET MCP request');
-  res.writeHead(405).end(JSON.stringify({
-    jsonrpc: "2.0",
-    error: {
-      code: -32000,
-      message: "Method not allowed."
-    },
-    id: null
-  }));
-});
-
-// Session termination not needed in stateless mode
-app.delete('/mcp', async (req, res) => {
-  console.log('Received DELETE MCP request');
-  res.writeHead(405).end(JSON.stringify({
-    jsonrpc: "2.0",
-    error: {
-      code: -32000,
-      message: "Method not allowed."
-    },
-    id: null
-  }));
-});
-
-const setupServer = async () => {
-
-   server.registerTool(
-        "say-hello",
-        {
-            title: "Say hello to user",
-            description: "Say hello to a user",
-            inputSchema: { user: z.string() }
-        },
-        async ({ user }) => {
-            const response = await fetch(`http://localhost:3000/${user}`);
-            const data = await response.text();
-            return {
-            content: [{ type: "text", text: data }]
-            };
-        }
+    server.registerTool(
+      "say-hello",
+      {
+          title: "Say hello to user",
+          description: "Say hello to a user",
+          inputSchema: { user: z.string() }
+      },
+      async ({ user }) => {
+          const response = await fetch(`http://localhost:3000/hello/${user}`);
+          const data = await response.text();
+          return {
+          content: [{ type: "text", text: data }]
+          };
+      }
     );
 
+    // Connect to the MCP server
+    await server.connect(transport);
+  } else {
+    // Invalid request
 
-}
-// Start the server
-const PORT = 4000;
-setupServer().then(() => {
-  app.listen(PORT, (error) => {
-    if (error) {
-      console.error('Failed to start server:', error);
-      process.exit(1);
-    }
-    console.log(`MCP Stateless Streamable HTTP Server listening on port ${PORT}`);
-  });
-}).catch(error => {
-  console.error('Failed to set up the server:', error);
-  process.exit(1);
+    res.status(400).json({
+      jsonrpc: '2.0',
+      error: {
+        code: -32000,
+        message: 'Bad Request: No valid session ID provided',
+      },
+      id: null,
+    });
+    return;
+  }
+
+  await transport.handleRequest(req, res, req.body);
 });
+
+// Reusable handler for GET and DELETE requests
+const handleSessionRequest = async (req, res) => {
+
+  
+  const sessionId = req.headers['mcp-session-id'] || undefined;
+
+  
+  if (!sessionId || !transports[sessionId]) {
+    
+    res.status(400).send('Invalid or missing session ID');
+    return;
+  }
+  
+  const transport = transports[sessionId];
+
+  await transport.handleRequest(req, res);
+};
+
+app.get('/mcp', handleSessionRequest);
+app.delete('/mcp', handleSessionRequest);
+
+app.listen(4000, ()=> console.log("MCP Server Listening on Port 4000"))

@@ -8,7 +8,7 @@ node example-api/index.js
 
 # Third tab: Start an mcp server connected to the example-api
 
-node mcp-server-example-api/index.js
+node mcp-server-example-api-http/index.js
 
 
 // Debug mcp server with  npx @modelcontextprotocol/inspector

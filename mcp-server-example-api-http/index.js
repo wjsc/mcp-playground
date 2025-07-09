@@ -54,17 +54,17 @@ app.post('/mcp', async (req, res) => {
     });
 
     server.registerTool(
-      "say-hello",
+      "get_current_time",
       {
-          title: "Say hello to user",
-          description: "Say hello to a user",
-          inputSchema: { user: z.string() }
+          title: "Returns current Argentinean Timestamp",
+          description: "Returns current Argentinean Timestamp",
+          inputSchema: {}
       },
       async ({ user }) => {
-          const response = await fetch(`http://localhost:3000/hello/${user}`);
+          const response = await fetch(`http://localhost:3000/time`);
           const data = await response.text();
           return {
-          content: [{ type: "text", text: data }]
+          content: [{ type: "text", text: "Current time in Argentina is " + data }]
           };
       }
     );
@@ -102,7 +102,6 @@ const handleSessionRequest = async (req, res) => {
   }
   
   const transport = transports[sessionId];
-  console.log(req)
   await transport.handleRequest(req, res);
 };
 
